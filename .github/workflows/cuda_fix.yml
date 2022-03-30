@@ -3,13 +3,14 @@
 
 name: Fix Cuda Bug
 
-on: [pull, request]
+on: [push, pull_request]
 
 jobs:
 
   # build on cpu hosts and upload to GHA
   build_on_cpu:
     runs-on: linux.2xlarge
+    steps:
     - name: Install CUDA 11.3
       shell: bash
       run: |

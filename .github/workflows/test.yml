@@ -12,8 +12,6 @@ jobs:
     # for this case, it's 2.26
     runs-on: linux.4xlarge.nvidia.gpu
     steps:
-    - name: Check ldd --version
-      run: ldd --version
     - name: check cpu info
       shell: bash
       run: |

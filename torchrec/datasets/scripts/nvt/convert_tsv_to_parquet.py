@@ -8,12 +8,13 @@
 import argparse
 import os
 import shutil
+import subprocess
 import time
 
 import numpy as np
 import nvtabular as nvt
-from torchrec.datasets.criteo import DAYS, DEFAULT_COLUMN_NAMES, DEFAULT_LABEL_NAME
 from utils.dask import setup_dask
+from utils.criteo_constant import DEFAULT_COLUMN_NAMES, DEFAULT_LABEL_NAME, DAYS
 
 dtypes = {c: np.int32 for c in DEFAULT_COLUMN_NAMES[:14] + [DEFAULT_LABEL_NAME]}
 dtypes.update({c: "hex" for c in DEFAULT_COLUMN_NAMES[14:]})
@@ -33,7 +34,36 @@ def convert_tsv_to_parquet(input_path: str, output_base_path: str):
         shutil.rmtree(output_path)
     os.makedirs(output_path)
 
-    input_paths = [os.path.join(input_path, f"day_{day}") for day in range(DAYS)]
+    # split last day into two parts
+    number_of_lines = int(
+        subprocess.check_output(
+            (f'wc -l {os.path.join(input_path, "day_23")}').split()
+        ).split()[0]
+    )
+    valid_set_size = number_of_lines // 2
+    test_set_size = number_of_lines - valid_set_size
+
+    with open(os.path.join(input_path, "day_23.part0"), "w") as f:
+        subprocess.run(
+            ["head", "-n", str(test_set_size), str(os.path.join(input_path, "day_23"))],
+            stdout=f,
+        )
+
+    with open(os.path.join(input_path, "day_23.part1"), "w") as f:
+        subprocess.run(
+            [
+                "tail",
+                "-n",
+                str(valid_set_size),
+                str(os.path.join(input_path, "day_23")),
+            ],
+            stdout=f,
+        )
+    DAYS = 2
+
+    input_paths = [
+        os.path.join(input_path, f"day_{day}") for day in range(DAYS - 1)
+    ] + [os.path.join(input_path, f"day_23.part{i}") for i in range(2)]
 
     tsv_dataset = nvt.Dataset(input_paths, **config)
 

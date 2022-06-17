@@ -1,33 +1,38 @@
 import argparse
+from collections import defaultdict
 import glob
 import logging
 import os
 import sys
-from collections import defaultdict
+import time
 
 from typing import cast, List
+from nvt_binary_dataloader import NvtBinaryDataloader
+from pyre_extensions import none_throws
 
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-import torchrec.distributed as trec_dist
-import torchrec.optim as trec_optim
-
-from dlrm_train import DLRMTrain
 from fbgemm_gpu.split_embedding_configs import EmbOptimType as OptimType
-from nvt_binary_dataloader import NvtBinaryDataloader
-from nvt_criteo_dataloader import get_dataloader, NvtCriteoDataloader
-from pyre_extensions import none_throws
 from torchrec import EmbeddingBagCollection
-
-from torchrec.datasets.criteo import DEFAULT_CAT_NAMES, DEFAULT_INT_NAMES
+import torchrec.distributed as trec_dist
 from torchrec.distributed import TrainPipelineSparseDist
 from torchrec.distributed.embeddingbag import EmbeddingBagCollectionSharder
 from torchrec.distributed.model_parallel import DistributedModelParallel
 from torchrec.distributed.types import ModuleSharder
-from torchrec.metrics.throughput import ThroughputMetric
 from torchrec.modules.embedding_configs import EmbeddingBagConfig
+from torchrec.metrics.throughput import ThroughputMetric
 from torchrec.optim.keyed import CombinedOptimizer, KeyedOptimizerWrapper
+import torchrec.optim as trec_optim
+import torchmetrics as metrics
+
+from torchrec.datasets.criteo import (
+    DEFAULT_CAT_NAMES,
+    DEFAULT_INT_NAMES,
+)
+
+from dlrm_train import DLRMTrain
+# from nvt_criteo_dataloader import NvtCriteoDataloader, get_dataloader
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -94,7 +99,7 @@ def main(argv: List[str]):
     args = parse_args(argv)
     # print("world_rank", os.environ['OMPI_COMM_WORLD_RANK'])
     # print("local_rank", int(os.environ["LOCAL_RANK"]))
-    os.environ["CUDA_VISIBLE_DEVICES"] = os.environ["LOCAL_RANK"]
+    os.environ['CUDA_VISIBLE_DEVICES'] = os.environ["LOCAL_RANK"]
     rank = int(os.environ["LOCAL_RANK"])
 
     if torch.cuda.is_available():
@@ -107,7 +112,7 @@ def main(argv: List[str]):
     if not torch.distributed.is_initialized():
         dist.init_process_group(backend=backend)
         torch.cuda.set_device(device)
-
+        
     # print("rank", dist.get_rank())
     rank = dist.get_rank()
     world_size = dist.get_world_size()
@@ -119,16 +124,19 @@ def main(argv: List[str]):
 
     train_paths = sorted(glob.glob(os.path.join(args.train_path, "*", "*.parquet")))
 
-    # train_loader = NvtCriteoDataloader(
-    #     train_paths,
-    #     batch_size=args.batch_size,
-    #     world_size=world_size,
-    #     rank=rank,
-    # ).get_nvt_criteo_dataloader()
 
     train_loader = NvtBinaryDataloader(
-        binary_file_path="/data/criteo_test_output/criteo_binary/split/train/",
-        categorical_sizes_file_path="/data/criteo_test_output/criteo_binary/model_size.json",
+        binary_file_path="/mnt/5tb/criteo_output/criteo_binary/split/train/",
+        batch_size=args.batch_size,
+    ).get_dataloader(rank=rank, world_size=world_size)
+
+    val_loader = NvtBinaryDataloader(
+        binary_file_path="/mnt/5tb/criteo_output/criteo_binary/split/validation/",
+        batch_size=args.batch_size,
+    ).get_dataloader(rank=rank, world_size=world_size)
+
+    test_loader = NvtBinaryDataloader(
+        binary_file_path="/mnt/5tb/criteo_output/criteo_binary/split/test/",
         batch_size=args.batch_size,
     ).get_dataloader(rank=rank, world_size=world_size)
 
@@ -170,10 +178,10 @@ def main(argv: List[str]):
     pg = dist.GroupMember.WORLD
     constraints = defaultdict(lambda: trec_dist.planner.ParameterConstraints())
     for embedding_bag_config in eb_configs:
-        constraints[embedding_bag_config.name].sharding_types = ["row_wise"]
+        # constraints[embedding_bag_config.name].sharding_types = ["row_wise"]
         constraints[embedding_bag_config.name].kernel_types = ["batched_fused"]
 
-    hbm_cap = torch.cuda.get_device_properties(device).total_memory * 0.3
+    hbm_cap = torch.cuda.get_device_properties(device).total_memory
     print("hbm_cap: ", hbm_cap)
     local_world_size = trec_dist.comm.get_local_size(world_size)
     model = DistributedModelParallel(
@@ -217,24 +225,42 @@ def main(argv: List[str]):
         window_seconds=30,
         warmup_steps=10,
     )
-    args.epochs = 1
+    args.epochs = 100
     for epoch in range(args.epochs):
         logger.info(f"Starting epoch {epoch}")
+        start_time = time.time()
         it = iter(train_loader)
         step = 0
         losses = []
         while True:
             try:
+                train_pipeline._model.train()
                 loss, _logits, _labels = train_pipeline.progress(it)
-                # predictions = logits.sigmoid()
-                # labels = labels.int()
-                # ne_metric.update(predictions=predictions, labels=labels, weights=None)
 
                 throughput.update()
                 losses.append(loss)
 
                 if step % 100 == 0 and step != 0:
+                    # infra calculation
                     throughput_val = throughput.compute()
+
+                    # metrics calculation
+                    train_pipeline._model.eval()
+                    auroc = metrics.AUROC(compute_on_step=False).to(device)
+                    accuracy = metrics.Accuracy(compute_on_step=False).to(device)
+                    validation_it = iter(val_loader)
+                    with torch.no_grad():
+                        try:
+                            _loss, logits, labels = train_pipeline.progress(validation_it)
+                            preds = torch.sigmoid(logits)
+                            labels = labels.to(torch.int32)
+                            auroc(preds, labels)
+                            accuracy(preds, labels)
+                        except StopIteration:
+                            break
+                    auroc_result = auroc.compute().item()
+                    accuracy_result = accuracy.compute().item()
+
                     if rank == 0:
                         print("step", step)
                         print("throughput", throughput_val)
@@ -242,12 +268,17 @@ def main(argv: List[str]):
                             "binary cross entropy loss",
                             torch.mean(torch.stack(losses)) / (args.batch_size),
                         )
+                        print(f"AUROC over validation set: {auroc_result}.")
+                        print(f"Accuracy over validation set: {accuracy_result}.")
                     losses = []
                 step += 1
 
             except StopIteration:
                 print("Reached stop iteration")
                 break
+        train_time = time.time()
+        if rank == 0:
+            print(f"this epoch training takes {train_time - start_time}")
 
 
 if __name__ == "__main__":

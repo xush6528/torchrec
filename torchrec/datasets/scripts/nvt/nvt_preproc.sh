@@ -17,8 +17,7 @@ FINAL_OUTPUT_PATH=""$BINARY_OUTPUT_PATH"split"
 
 python convert_tsv_to_parquet.py -i "$INPUT_PATH" -o "$BASE_OUTPUT_PATH"
 python process_criteo_parquet.py -b "$BASE_OUTPUT_PATH"
-python convert_parquet_to_binary.py --src_dir ${SRC_DIR} \
+python convert_parquet_to_binary.py --src_dir $SRC_DIR \
                                 --intermediate_dir  ${TEMP_PATH} \
-                                --dst_dir ${BINARY_OUTPUT_PATH}
-cp "${SRC_DIR}/model_size.json" "${BINARY_OUTPUT_PATH}/model_size.json"
+                                --dst_dir ${BINARY_OUTPUT_PATH} 
 python split_binary_dataset.py --input_path ${BINARY_OUTPUT_PATH} --output_path ${FINAL_OUTPUT_PATH} --batch_size ${BATCH_SIZE}

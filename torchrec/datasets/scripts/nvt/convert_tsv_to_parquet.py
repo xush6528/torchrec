@@ -59,11 +59,12 @@ def convert_tsv_to_parquet(input_path: str, output_base_path: str):
             ],
             stdout=f,
         )
-    DAYS = 2
 
     input_paths = [
         os.path.join(input_path, f"day_{day}") for day in range(DAYS - 1)
     ] + [os.path.join(input_path, f"day_23.part{i}") for i in range(2)]
+
+    print(f"handling the input paths: {input_paths}")
 
     tsv_dataset = nvt.Dataset(input_paths, **config)
 

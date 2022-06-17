@@ -9,14 +9,15 @@ import argparse
 import json
 
 import math
+import time
 import os
 from typing import Sequence
 
 import numpy as np
 
-from tqdm import tqdm
+from utils.criteo_constant import DEFAULT_CAT_NAMES, DEFAULT_INT_NAMES, NUM_EMBEDDINGS_PER_FEATURE
 
-from utils.criteo_constant import DEFAULT_CAT_NAMES, DEFAULT_INT_NAMES
+from tqdm import tqdm
 
 
 def get_categorical_feature_type(size: int):
@@ -96,15 +97,6 @@ def split_binary_file(
 
 
 def split_dataset(dataset_dir: str, output_dir: str, batch_size: int):
-    categorical_sizes_file = os.path.join(dataset_dir, "model_size.json")
-    with open(categorical_sizes_file) as f:
-        # model_size.json contains the max value of each feature instead of the cardinality.
-        # For feature spec this is changed for consistency and clarity.
-        json_dict = json.load(f)
-        categorical_cardinalities = [
-            int(json_dict[name]) + 1 for name in DEFAULT_CAT_NAMES
-        ]
-
     train_file = os.path.join(dataset_dir, "train_data.bin")
     test_file = os.path.join(dataset_dir, "test_data.bin")
     val_file = os.path.join(dataset_dir, "validation_data.bin")
@@ -121,27 +113,30 @@ def split_dataset(dataset_dir: str, output_dir: str, batch_size: int):
     split_binary_file(
         test_file,
         target_test,
-        categorical_cardinalities,
+        NUM_EMBEDDINGS_PER_FEATURE,
         batch_size,
     )
     split_binary_file(
         train_file,
         target_train,
-        categorical_cardinalities,
+        NUM_EMBEDDINGS_PER_FEATURE,
         batch_size,
     )
-    split_binary_file(val_file, target_val, categorical_cardinalities, batch_size)
+    split_binary_file(val_file, target_val, NUM_EMBEDDINGS_PER_FEATURE, batch_size)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_path", type=str, required=True)
     parser.add_argument("--output_path", type=str, required=True)
-    parser.add_argument("--batch_size", type=int, default=65536)
+    parser.add_argument("--batch_size", type=int, required=True)
     args = parser.parse_args()
+
+    start_time = time.time()
 
     split_dataset(
         dataset_dir=args.input_path,
         output_dir=args.output_path,
         batch_size=args.batch_size,
     )
+    print(f"Processing took {time.time()-start_time:.2f} sec")

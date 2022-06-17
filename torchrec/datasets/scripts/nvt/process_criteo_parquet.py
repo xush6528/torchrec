@@ -12,11 +12,12 @@ import shutil
 import time
 from collections import OrderedDict
 from typing import List
+from nvtabular.utils import device_mem_size
+
 
 import numpy as np
 import nvtabular as nvt
 from merlin.io import Shuffle
-from nvtabular.utils import device_mem_size
 from utils.criteo_constant import (
     DAYS,
     DEFAULT_CAT_NAMES,
@@ -24,26 +25,15 @@ from utils.criteo_constant import (
     DEFAULT_INT_NAMES,
     DEFAULT_LABEL_NAME,
     FREQUENCY_THRESHOLD,
+    NUM_EMBEDDINGS_PER_FEATURE,
 )
 from utils.dask import setup_dask
 
 
-def save_model_size_config(workflow: nvt.Workflow, output_path: str):
-    embeddings = {}
-    for k, v in nvt.ops.get_embedding_sizes(workflow).items():
-        embeddings[k] = (
-            v[0] - 1
-        )  # we have to subtract one, as the model expects to get a maximal id for each category
-
-    ordered_dict = OrderedDict()
-    for k, v in sorted(embeddings.items(), key=lambda x: x[0]):
-        ordered_dict[k] = v
-    with open(os.path.join(output_path, "model_size.json"), "w") as file:
-        file.write(json.dumps(ordered_dict))
-
-
 def process_criteo(
-    input_paths: List[str], output_paths: List[str], base_output_path: str
+    input_paths: List[str],
+    output_path: str,
+    num_embeddings_per_feature: List[int],
 ):
     part_mem_frac = 0.05
     device_size = device_mem_size(kind="total")
@@ -51,7 +41,14 @@ def process_criteo(
     cat_features = (
         DEFAULT_CAT_NAMES
         >> nvt.ops.FillMissing()
-        >> nvt.ops.Categorify(freq_threshold=FREQUENCY_THRESHOLD)
+        >> nvt.ops.HashBucket(
+            {
+                cat_name: num_embeddings
+                for cat_name, num_embeddings in zip(
+                    DEFAULT_CAT_NAMES, num_embeddings_per_feature
+                )
+            }
+        )
     )
     # We want to assign 0 to all missing values, and calculate log(x+3) for present values
     # so if we set missing values to -2, then the result of log(1+2+(-2)) would be 0
@@ -70,20 +67,18 @@ def process_criteo(
     features = cat_features + cont_features + [DEFAULT_LABEL_NAME]
     workflow = nvt.Workflow(features)
 
-    for input_path, output_path in zip(input_paths, output_paths):
-        input_dataset = nvt.Dataset(input_path, engine="parquet", part_size=part_size)
-        workflow.fit(input_dataset)
+    input_dataset = nvt.Dataset(input_paths, engine="parquet", part_size=part_size)
+    workflow.fit(input_dataset)
 
-        workflow.transform(input_dataset).to_parquet(
-            output_path=os.path.join(output_path),
-            dtypes=target_dtypes,
-            cats=DEFAULT_CAT_NAMES,
-            conts=DEFAULT_INT_NAMES,
-            labels=[DEFAULT_LABEL_NAME],
-            shuffle=shuffle,
-            out_files_per_proc=out_files_per_proc,
-        )
-    save_model_size_config(workflow, base_output_path)
+    workflow.transform(input_dataset).to_parquet(
+        output_path=os.path.join(output_path),
+        dtypes=target_dtypes,
+        cats=DEFAULT_CAT_NAMES,
+        conts=DEFAULT_INT_NAMES,
+        labels=[DEFAULT_LABEL_NAME],
+        shuffle=shuffle,
+        out_files_per_proc=out_files_per_proc,
+    )
 
 
 def parse_args():
@@ -115,20 +110,26 @@ if __name__ == "__main__":
     out_train = os.path.join(output_path, "train")
     out_valid = os.path.join(output_path, "validation")
     out_test = os.path.join(output_path, "test")
-    DAYS = 2
-    input_paths = (
-        [os.path.join(input_path, f"day_{day}.parquet") for day in range(DAYS - 1)]
-        + [os.path.join(input_path, "day_23.part0.parquet")]
-        + [os.path.join(input_path, "day_23.part1.parquet")]
-    )
-    output_paths = (
-        [os.path.join(output_path, "train")]
-        + [os.path.join(output_path, "validation")]
-        + [os.path.join(output_path, "test")]
+
+    # train
+    process_criteo(
+        [os.path.join(input_path, f"day_{day}.parquet") for day in range(DAYS - 1)],
+        out_train,
+        NUM_EMBEDDINGS_PER_FEATURE,
     )
 
-    print("input_paths: ", input_paths)
-    print("output_paths: ", output_paths)
+    # validation
+    process_criteo(
+        [os.path.join(input_path, "day_23.part0.parquet")],
+        out_valid,
+        NUM_EMBEDDINGS_PER_FEATURE,
+    )
 
-    process_criteo(input_paths, output_paths, os.path.join(output_path))
+    # test
+    process_criteo(
+        [os.path.join(input_path, "day_23.part1.parquet")],
+        out_test,
+        NUM_EMBEDDINGS_PER_FEATURE,
+    )
+
     print(f"Processing took {time.time()-start_time:.2f} sec")

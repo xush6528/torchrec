@@ -37,6 +37,34 @@ DEFAULT_COLUMN_NAMES: List[str] = [
     *DEFAULT_CAT_NAMES,
 ]
 TOTAL_TRAINING_SAMPLES = 4195197692  # Number of rows across days 0-22 (day 23 is used for validation and testing)
+NUM_EMBEDDINGS_PER_FEATURE = [
+    45833188,
+    36746,
+    17245,
+    7413,
+    20243,
+    3,
+    7114,
+    1441,
+    62,
+    29275261,
+    1572176,
+    345138,
+    10,
+    2209,
+    11267,
+    128,
+    4,
+    974,
+    14,
+    48937457,
+    11316796,
+    40094537,
+    452104,
+    12606,
+    104,
+    35,
+]
 
 COLUMN_TYPE_CASTERS: List[Callable[[Union[int, str]], Union[int, str]]] = [
     lambda val: safe_cast(val, int, 0),

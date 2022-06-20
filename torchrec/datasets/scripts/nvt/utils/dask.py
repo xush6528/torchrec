@@ -19,13 +19,15 @@ def setup_dask(dask_workdir):
         shutil.rmtree(dask_workdir)
     os.makedirs(dask_workdir)
 
-    device_limit_frac = 0.7  # Spill GPU-Worker memory to host at this limit.
-    device_pool_frac = 0.8
+    device_limit_frac = 0.95  # Spill GPU-Worker memory to host at this limit.
+    device_pool_frac = 0.9
 
     # Use total device size to calculate device limit and pool_size
     device_size = device_mem_size(kind="total")
     device_limit = int(device_limit_frac * device_size)
     device_pool_size = int(device_pool_frac * device_size)
+
+    print("(device_pool_size // 256) * 256: ", (device_pool_size // 256) * 256)
 
     cluster = LocalCUDACluster(
         protocol="tcp",

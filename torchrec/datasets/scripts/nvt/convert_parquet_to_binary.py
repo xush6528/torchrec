@@ -44,7 +44,7 @@ def main():
     parser.add_argument("--src_dir", type=str)
     parser.add_argument("--intermediate_dir", type=str)
     parser.add_argument("--dst_dir", type=str)
-    parser.add_argument("--parallel_jobs", default=200, type=int)
+    parser.add_argument("--parallel_jobs", default=20, type=int)
     args = parser.parse_args()
 
     print("Processing train files...")

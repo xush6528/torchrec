@@ -24,9 +24,10 @@ def convert_tsv_to_parquet(input_path: str, output_base_path: str):
     config = {
         "engine": "csv",
         "names": DEFAULT_COLUMN_NAMES,
-        "part_memory_fraction": 1,
+        # "part_memory_fraction": 1,
         "sep": "\t",
         "dtypes": dtypes,
+        "part_size": "120MB",
     }
 
     output_path = os.path.join(output_base_path, "criteo_parquet")

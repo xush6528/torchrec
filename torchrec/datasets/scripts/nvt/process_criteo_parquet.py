@@ -38,6 +38,7 @@ def process_criteo(
     part_mem_frac = 0.05
     device_size = device_mem_size(kind="total")
     part_size = int(part_mem_frac * device_size)
+    print("part_size: ", part_size)
     cat_features = (
         DEFAULT_CAT_NAMES
         >> nvt.ops.FillMissing()
@@ -67,7 +68,7 @@ def process_criteo(
     features = cat_features + cont_features + [DEFAULT_LABEL_NAME]
     workflow = nvt.Workflow(features)
 
-    input_dataset = nvt.Dataset(input_paths, engine="parquet", part_size=part_size)
+    input_dataset = nvt.Dataset(input_paths, engine="parquet", part_size="128MB")
     workflow.fit(input_dataset)
 
     workflow.transform(input_dataset).to_parquet(
@@ -110,6 +111,8 @@ if __name__ == "__main__":
     out_train = os.path.join(output_path, "train")
     out_valid = os.path.join(output_path, "validation")
     out_test = os.path.join(output_path, "test")
+
+    DAYS = 10
 
     # train
     process_criteo(

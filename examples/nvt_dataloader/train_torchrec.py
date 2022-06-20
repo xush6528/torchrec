@@ -83,7 +83,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     parser.add_argument(
         "--learning_rate",
         type=float,
-        default=15.0,
+        default=10.0,
         help="Learning rate.",
     )
     parser.add_argument(
@@ -126,17 +126,17 @@ def main(argv: List[str]):
 
 
     train_loader = NvtBinaryDataloader(
-        binary_file_path="/mnt/5tb/criteo_output/criteo_binary/split/train/",
+        binary_file_path="/data/criteo_test_output/criteo_binary/split/train/",
         batch_size=args.batch_size,
     ).get_dataloader(rank=rank, world_size=world_size)
 
     val_loader = NvtBinaryDataloader(
-        binary_file_path="/mnt/5tb/criteo_output/criteo_binary/split/validation/",
+        binary_file_path="/data/criteo_test_output/criteo_binary/split/validation/",
         batch_size=args.batch_size,
     ).get_dataloader(rank=rank, world_size=world_size)
 
     test_loader = NvtBinaryDataloader(
-        binary_file_path="/mnt/5tb/criteo_output/criteo_binary/split/test/",
+        binary_file_path="/data/criteo_test_output/criteo_binary/split/test/",
         batch_size=args.batch_size,
     ).get_dataloader(rank=rank, world_size=world_size)
 
@@ -226,6 +226,7 @@ def main(argv: List[str]):
         warmup_steps=10,
     )
     args.epochs = 100
+    change_lr = True
     for epoch in range(args.epochs):
         logger.info(f"Starting epoch {epoch}")
         start_time = time.time()
@@ -236,6 +237,15 @@ def main(argv: List[str]):
             try:
                 train_pipeline._model.train()
                 loss, _logits, _labels = train_pipeline.progress(it)
+
+                # if change_lr and (
+                #     (it * (epoch + 1) / samples_per_trainer) > lr_change_point
+                # ):  # progress made through the epoch
+                #     print(f"Changing learning rate to: {lr_after_change_point}")
+                #     optimizer = train_pipeline._optimizer
+                #     lr = lr_after_change_point
+                #     for g in optimizer.param_groups:
+                #         g["lr"] = lr
 
                 throughput.update()
                 losses.append(loss)

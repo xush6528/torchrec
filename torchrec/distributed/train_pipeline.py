@@ -455,6 +455,7 @@ class TrainPipelineSparseDist(TrainPipeline[In, Out]):
         # batch 1
         with torch.cuda.stream(self._memcpy_stream):
             batch_i = next(dataloader_iter)
+
             self._batch_i = batch_i = _to_device(
                 batch_i, self._device, non_blocking=True
             )
@@ -486,6 +487,7 @@ class TrainPipelineSparseDist(TrainPipeline[In, Out]):
         with record_function("## copy_batch_to_gpu ##"):
             with torch.cuda.stream(self._memcpy_stream):
                 batch_ip2 = next(dataloader_iter)
+
                 self._batch_ip2 = batch_ip2 = _to_device(
                     batch_ip2, self._device, non_blocking=True
                 )

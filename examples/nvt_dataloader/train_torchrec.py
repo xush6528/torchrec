@@ -83,7 +83,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     parser.add_argument(
         "--learning_rate",
         type=float,
-        default=10.0,
+        default=0.001,
         help="Learning rate.",
     )
     parser.add_argument(
@@ -97,8 +97,6 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 
 def main(argv: List[str]):
     args = parse_args(argv)
-    # print("world_rank", os.environ['OMPI_COMM_WORLD_RANK'])
-    # print("local_rank", int(os.environ["LOCAL_RANK"]))
     os.environ['CUDA_VISIBLE_DEVICES'] = os.environ["LOCAL_RANK"]
     rank = int(os.environ["LOCAL_RANK"])
 
@@ -126,17 +124,17 @@ def main(argv: List[str]):
 
 
     train_loader = NvtBinaryDataloader(
-        binary_file_path="/data/criteo_test_output/criteo_binary/split/train/",
+        binary_file_path="/data/criteo_output/criteo_binary/split/train/",
         batch_size=args.batch_size,
     ).get_dataloader(rank=rank, world_size=world_size)
 
     val_loader = NvtBinaryDataloader(
-        binary_file_path="/data/criteo_test_output/criteo_binary/split/validation/",
+        binary_file_path="/data/criteo_output/criteo_binary/split/validation/",
         batch_size=args.batch_size,
     ).get_dataloader(rank=rank, world_size=world_size)
 
     test_loader = NvtBinaryDataloader(
-        binary_file_path="/data/criteo_test_output/criteo_binary/split/test/",
+        binary_file_path="/data/criteo_output/criteo_binary/split/test/",
         batch_size=args.batch_size,
     ).get_dataloader(rank=rank, world_size=world_size)
 
@@ -182,7 +180,7 @@ def main(argv: List[str]):
         constraints[embedding_bag_config.name].kernel_types = ["batched_fused"]
 
     hbm_cap = torch.cuda.get_device_properties(device).total_memory
-    print("hbm_cap: ", hbm_cap)
+    # print("hbm_cap: ", hbm_cap)
     local_world_size = trec_dist.comm.get_local_size(world_size)
     model = DistributedModelParallel(
         module=train_model,
@@ -225,8 +223,13 @@ def main(argv: List[str]):
         window_seconds=30,
         warmup_steps=10,
     )
-    args.epochs = 100
+    args.epochs = 1
     change_lr = True
+
+    # ne_metric = metric.NormalizedEntropy().to(device=device)
+    auroc = metrics.AUROC(compute_on_step=False).to(device)
+    accuracy = metrics.Accuracy(compute_on_step=False).to(device)
+    
     for epoch in range(args.epochs):
         logger.info(f"Starting epoch {epoch}")
         start_time = time.time()
@@ -253,34 +256,44 @@ def main(argv: List[str]):
                 if step % 100 == 0 and step != 0:
                     # infra calculation
                     throughput_val = throughput.compute()
-
+                    if rank == 0:
+                        print("step", step)
+                        print("throughput", throughput_val)
+                        # print(
+                        #     "training binary cross entropy loss",
+                        #     torch.mean(torch.stack(losses)) / (args.batch_size),
+                        # )
+                        # print(
+                        #     "validation binary cross entropy loss",
+                        #     torch.mean(torch.stack(val_losses)) / (args.batch_size),
+                        # )
+                    losses = []
+                if step % 1000 == 0 and step != 0:
                     # metrics calculation
                     train_pipeline._model.eval()
-                    auroc = metrics.AUROC(compute_on_step=False).to(device)
-                    accuracy = metrics.Accuracy(compute_on_step=False).to(device)
+                    
                     validation_it = iter(val_loader)
+
+                    val_losses = []
                     with torch.no_grad():
                         try:
-                            _loss, logits, labels = train_pipeline.progress(validation_it)
+                            loss, logits, labels = train_pipeline.progress(validation_it)
+                            val_losses.append(loss)
                             preds = torch.sigmoid(logits)
+                            
                             labels = labels.to(torch.int32)
+                            # ne_metric.update(preds, labels)
                             auroc(preds, labels)
                             accuracy(preds, labels)
                         except StopIteration:
                             break
                     auroc_result = auroc.compute().item()
                     accuracy_result = accuracy.compute().item()
-
+                    # ne_result = ne_metric.compute().item()
                     if rank == 0:
-                        print("step", step)
-                        print("throughput", throughput_val)
-                        print(
-                            "binary cross entropy loss",
-                            torch.mean(torch.stack(losses)) / (args.batch_size),
-                        )
                         print(f"AUROC over validation set: {auroc_result}.")
                         print(f"Accuracy over validation set: {accuracy_result}.")
-                    losses = []
+
                 step += 1
 
             except StopIteration:
@@ -289,6 +302,25 @@ def main(argv: List[str]):
         train_time = time.time()
         if rank == 0:
             print(f"this epoch training takes {train_time - start_time}")
+
+
+        # test
+        train_pipeline._model.eval()
+        test_it = iter(test_loader)
+        with torch.no_grad():
+            try:
+                loss, logits, labels = train_pipeline.progress(test_it)
+                preds = torch.sigmoid(logits)
+                labels = labels.to(torch.int32)
+                auroc(preds, labels)
+                accuracy(preds, labels)
+            except StopIteration:
+                break
+        auroc_result = auroc.compute().item()
+        accuracy_result = accuracy.compute().item()
+        if rank == 0:
+            print(f"AUROC over test set: {auroc_result}.")
+            print(f"Accuracy over test set: {accuracy_result}.")
 
 
 if __name__ == "__main__":

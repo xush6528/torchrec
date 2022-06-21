@@ -15,23 +15,9 @@ from typing import Sequence
 
 import numpy as np
 
-from utils.criteo_constant import DEFAULT_CAT_NAMES, DEFAULT_INT_NAMES, NUM_EMBEDDINGS_PER_FEATURE
+from utils.criteo_constant import CAT_FEATURE_COUNT, DEFAULT_CAT_NAMES, DEFAULT_INT_NAMES, NUM_EMBEDDINGS_PER_FEATURE
 
 from tqdm import tqdm
-
-
-def get_categorical_feature_type(size: int):
-    """This function works both when max value and cardinality is passed.
-    Consistency by the user is required"""
-    types = (np.int8, np.int16, np.int32)
-
-    for numpy_type in types:
-        if size < np.iinfo(numpy_type).max:
-            return numpy_type
-
-    raise RuntimeError(
-        f"Categorical feature of size {size} is too big for defined types"
-    )
 
 
 def split_binary_file(
@@ -49,10 +35,6 @@ def split_binary_file(
 
     total_size = os.path.getsize(binary_file_path)
     batches_num = int(math.ceil((total_size // bytes_per_entry) / batch_size))
-
-    cat_feature_types = [
-        get_categorical_feature_type(cat_size) for cat_size in categorical_feature_sizes
-    ]
 
     file_streams = []
     try:
@@ -80,16 +62,16 @@ def split_binary_file(
             numerical_features = batch_data[:, 1 : 1 + len(DEFAULT_INT_NAMES)].view(
                 dtype=np.float32
             )
-            numerical_f.write(numerical_features.astype(np.float16).tobytes())
+            numerical_f.write(numerical_features.tobytes())
 
             label = batch_data[:, 0]
-            label_f.write(label.astype(np.bool).tobytes())
+            label_f.write(label.astype(np.float32).tobytes())
 
             cat_offset = len(DEFAULT_INT_NAMES) + 1
-            for cat_idx, cat_feature_type in enumerate(cat_feature_types):
+            for cat_idx in range(CAT_FEATURE_COUNT):
                 cat_data = batch_data[
                     :, (cat_idx + cat_offset) : (cat_idx + cat_offset + 1)
-                ].astype(cat_feature_type)
+                ].astype(np.int32)
                 categorical_fs[cat_idx].write(cat_data.tobytes())
     finally:
         for stream in file_streams:

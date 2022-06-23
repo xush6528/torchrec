@@ -9,45 +9,61 @@ import argparse
 import os
 import shutil
 import time
+from typing import List
 
 import numpy as np
 import nvtabular as nvt
-from torchrec.datasets.criteo import (
+from merlin.io import Shuffle
+from utils.criteo_constant import (
     DAYS,
     DEFAULT_CAT_NAMES,
     DEFAULT_COLUMN_NAMES,
     DEFAULT_INT_NAMES,
     DEFAULT_LABEL_NAME,
+    NUM_EMBEDDINGS_PER_FEATURE_DICT,
 )
 from utils.dask import setup_dask
 
 
-def process_criteo_day(input_path, output_path, day):
-    input_dataset = nvt.Dataset(os.path.join(input_path, f"day_{day}.parquet"))
-
-    cat_features = DEFAULT_CAT_NAMES >> nvt.ops.FillMissing()
+def process_criteo(
+    input_paths: List[str],
+    output_path: str,
+):
+    cat_features = (
+        DEFAULT_CAT_NAMES
+        >> nvt.ops.FillMissing()
+        >> nvt.ops.Categorify(max_size=NUM_EMBEDDINGS_PER_FEATURE_DICT)
+    )
+    # We want to assign 0 to all missing values, and calculate log(x+3) for present values
+    # so if we set missing values to -2, then the result of log(1+2+(-2)) would be 0
     cont_features = (
         DEFAULT_INT_NAMES
         >> nvt.ops.FillMissing()
         >> nvt.ops.LambdaOp(lambda col: col + 2)
-        >> nvt.ops.LogOp()
+        >> nvt.ops.LogOp()  # Log(1+x)
     )
-    features = cat_features + cont_features + [DEFAULT_LABEL_NAME]
-    workflow = nvt.Workflow(features)
-
-    workflow.fit(input_dataset)
-
     target_dtypes = {
         c: np.float32 for c in DEFAULT_COLUMN_NAMES[:14] + [DEFAULT_LABEL_NAME]
     }
     target_dtypes.update({c: "hex" for c in DEFAULT_COLUMN_NAMES[14:]})
+    shuffle = Shuffle.PER_WORKER  # Shuffle algorithm
+    out_files_per_proc = 8  # Number of output files per worker
+    features = cat_features + cont_features + [DEFAULT_LABEL_NAME]
+    workflow = nvt.Workflow(features)
+
+    input_dataset = nvt.Dataset(input_paths, engine="parquet", part_size="256MB")
+    workflow.fit(input_dataset)
+
+    print(f"finished loading the dataset of input: {input_paths}")
 
     workflow.transform(input_dataset).to_parquet(
-        output_path=os.path.join(output_path, f"day_{day}"),
+        output_path=os.path.join(output_path),
         dtypes=target_dtypes,
         cats=DEFAULT_CAT_NAMES,
         conts=DEFAULT_INT_NAMES,
         labels=[DEFAULT_LABEL_NAME],
+        shuffle=shuffle,
+        out_files_per_proc=out_files_per_proc,
     )
 
 
@@ -61,6 +77,7 @@ def parse_args():
 
 
 if __name__ == "__main__":
+    start_time = time.time()
     args = parse_args()
 
     dask_workdir = os.path.join(args.base_path, "dask_workdir")
@@ -76,7 +93,26 @@ if __name__ == "__main__":
         input_path
     ), f"Criteo parquet path {input_path} does not exist"
 
-    start_time = time.time()
-    for day in range(DAYS):
-        process_criteo_day(input_path, output_path, day)
+    out_train = os.path.join(output_path, "train")
+    out_valid = os.path.join(output_path, "validation")
+    out_test = os.path.join(output_path, "test")
+
+    # train
+    process_criteo(
+        [os.path.join(input_path, f"day_{day}.parquet") for day in range(DAYS - 1)],
+        out_train,
+    )
+
+    # validation
+    process_criteo(
+        [os.path.join(input_path, "day_23.part0.parquet")],
+        out_valid,
+    )
+
+    # test
+    process_criteo(
+        [os.path.join(input_path, "day_23.part1.parquet")],
+        out_test,
+    )
+
     print(f"Processing took {time.time()-start_time:.2f} sec")

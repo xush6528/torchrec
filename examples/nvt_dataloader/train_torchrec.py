@@ -206,13 +206,14 @@ def main(argv: List[str]):
         batch_size=args.batch_size,
     ).get_dataloader(rank=rank, world_size=world_size)
 
-    # it = iter(val_loader)
+    # it = iter(train_loader)
     # step = 0
     # while True:
     #     try:
+    #         # if (step == 4):
+    #         #     break
     #         batch = next(it)
-    #         if (rank == 0):
-    #             print(step)
+    #         print(batch)
     #         step += 1
     #     except StopIteration:
     #         break

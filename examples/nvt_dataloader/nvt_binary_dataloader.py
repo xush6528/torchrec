@@ -9,7 +9,7 @@ import concurrent
 import math
 import os
 import queue
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -31,12 +31,10 @@ class ParametricDataset(Dataset):
         self,
         binary_file_path: str,
         batch_size: int,  
-        prefetch_depth: int,
         drop_last_batch,
         **kwargs,
     ):
         self._batch_size = batch_size
-
         bytes_per_feature = {}
         for name in DEFAULT_INT_NAMES:
             bytes_per_feature[name] = np.dtype(np.float32).itemsize
@@ -79,23 +77,20 @@ class ParametricDataset(Dataset):
         batch_num_float = (
             os.fstat(self._label_file).st_size / self._label_bytes_per_batch
         )
-
+        # number of batches means the ALL data for all ranks
         number_of_batches = (
             math.ceil(batch_num_float)
             if not drop_last_batch
             else math.floor(batch_num_float)
         )
-
+        # for this data_loader, we should divide the num_batch by world_size
         self._num_entries = number_of_batches
-        self._prefetch_depth = min(prefetch_depth, self._num_entries)
-        self._prefetch_queue = queue.Queue()
+
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        # At the start, fill up the prefetching queue
-        for i in range(self._prefetch_depth):
-            self._prefetch_queue.put(self._executor.submit(self._get_item, (i)))
 
     def __len__(self):
         return self._num_entries
+
 
     def __getitem__(self, idx: int):
         """Numerical features are returned in the order they appear in the channel spec section
@@ -103,37 +98,18 @@ class ParametricDataset(Dataset):
         by the relevant chunk in source spec.
         Categorical features are returned in the order they appear in the channel spec section"""
 
-        # print(f"idx: {idx}")
-        # print(f"self._num_entries: {self._num_entries}")
-        # print(f"self._prefetch_depth: {self._prefetch_depth}")
-
-        return self._get_item(idx)
-
-
         if idx >= self._num_entries:
             raise IndexError()
-
-        if self._prefetch_depth <= 1:
-            return self._get_item(idx)
-
         
-        # Extend the prefetching window by one if not at the end of the dataset
-        if idx < self._num_entries - self._prefetch_depth:
-            self._prefetch_queue.put(
-                self._executor.submit(self._get_item, (idx + self._prefetch_depth))
-            )
-        return self._prefetch_queue.get().result()
+        return self._get_item(idx)
+
 
     def _get_item(
         self, idx: int
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
-        # print(f"idx: {idx}")
         click = self._get_label(idx)
-        # print(f"click: {click}")
         numerical_features = self._get_numerical_features(idx)
-        # print(f"numerical_features: {numerical_features}")
         categorical_features = self._get_categorical_features(idx)
-        # print(f"categorical_features: {categorical_features}")
 
         return numerical_features, categorical_features, click
 
@@ -182,13 +158,11 @@ class NvtBinaryDataloader:
         self,
         binary_file_path: str,
         batch_size: int = 2048,
-        prefetch_depth: int = 10,
         drop_last_batch: bool = True,  # the last batch may not contain enough data which breaks the size of KJT
     ) -> None:
         self.dataset = ParametricDataset(
             binary_file_path,
             batch_size,
-            prefetch_depth,
             drop_last_batch,
         )
         self._num_ids_in_batch: int = CAT_FEATURE_COUNT * batch_size
@@ -208,7 +182,6 @@ class NvtBinaryDataloader:
             key: i for (i, key) in enumerate(self.keys)
         }
         length = len(self.dataset)
-        print(f"length: {length}")
         # print(f"last: {self.dataset[length-1]}")
 
     def collate_fn(self, attr_dict):

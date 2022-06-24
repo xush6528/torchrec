@@ -132,7 +132,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
 
 def _eval(
     train_pipeline: TrainPipelineSparseDist, it: Iterator[Batch]
-) -> Tuple[float, float]:
+) -> Tuple[float, float, float]:
     train_pipeline._model.eval()
 
     device = train_pipeline._device
@@ -143,8 +143,8 @@ def _eval(
     with torch.no_grad():
         while True:
             try:
-                if step == 100000:
-                    break
+                # if step > 3000:
+                #     break
 
                 if (dist.get_rank() == 0 and step % 1000 == 0 and step != 0):
                     print(f"step :{step}")
@@ -153,6 +153,7 @@ def _eval(
                 loss, logits, labels = train_pipeline.progress(it)
                 val_losses.append(loss)
                 preds = torch.sigmoid(logits)
+                
 
                 labels = labels.to(torch.int32)
                 auroc(preds, labels)
@@ -162,7 +163,8 @@ def _eval(
                 break
     auroc_result = auroc.compute().item()
     accuracy_result = accuracy.compute().item()
-    return (auroc_result, accuracy_result)
+    bce_loss = torch.mean(torch.stack(val_losses))
+    return (auroc_result, accuracy_result, bce_loss)
 
 
 def main(argv: List[str]):
@@ -253,7 +255,7 @@ def main(argv: List[str]):
 
     pg = dist.GroupMember.WORLD
 
-    hbm_cap = torch.cuda.get_device_properties(device).total_memory
+    hbm_cap = torch.cuda.get_device_properties(device).total_memory * 0.7
     local_world_size = trec_dist.comm.get_local_size(world_size)
     model = DistributedModelParallel(
         module=train_model,
@@ -330,10 +332,14 @@ def main(argv: List[str]):
                 if step % args.validation_freq_within_epoch == 0 and step != 0:
                     # metrics calculation
                     validation_it = iter(val_loader)
-                    auroc_result, accuracy_result = _eval(train_pipeline, validation_it)
+                    auroc_result, accuracy_result, bce_loss = _eval(train_pipeline, validation_it)
                     if rank == 0:
                         print(f"AUROC over validation set: {auroc_result}.")
                         print(f"Accuracy over validation set: {accuracy_result}.")
+                        print(
+                            "binary cross entropy loss",
+                            bce_loss / (args.batch_size),
+                        )
                 step += 1
 
             except StopIteration:

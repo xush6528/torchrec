@@ -107,6 +107,8 @@ class ParametricDataset(Dataset):
         # print(f"self._num_entries: {self._num_entries}")
         # print(f"self._prefetch_depth: {self._prefetch_depth}")
 
+        return self._get_item(idx)
+
 
         if idx >= self._num_entries:
             raise IndexError()

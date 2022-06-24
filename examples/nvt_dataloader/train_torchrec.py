@@ -146,14 +146,12 @@ def _eval(
                 # if step > 3000:
                 #     break
 
-                if (dist.get_rank() == 0 and step % 1000 == 0 and step != 0):
+                if dist.get_rank() == 0 and step % 1000 == 0 and step != 0:
                     print(f"step :{step}")
-                
 
                 loss, logits, labels = train_pipeline.progress(it)
                 val_losses.append(loss)
                 preds = torch.sigmoid(logits)
-                
 
                 labels = labels.to(torch.int32)
                 auroc(preds, labels)
@@ -333,7 +331,9 @@ def main(argv: List[str]):
                 if step % args.validation_freq_within_epoch == 0 and step != 0:
                     # metrics calculation
                     validation_it = iter(val_loader)
-                    auroc_result, accuracy_result, bce_loss = _eval(train_pipeline, validation_it)
+                    auroc_result, accuracy_result, bce_loss = _eval(
+                        train_pipeline, validation_it
+                    )
                     if rank == 0:
                         print(f"AUROC over validation set: {auroc_result}.")
                         print(f"Accuracy over validation set: {accuracy_result}.")
@@ -352,10 +352,14 @@ def main(argv: List[str]):
 
         # test
         test_it = iter(test_loader)
-        auroc_result, accuracy_result = _eval(train_pipeline, test_it)
+        auroc_result, accuracy_result, bce_loss = _eval(train_pipeline, test_it)
         if rank == 0:
             print(f"AUROC over test set: {auroc_result}.")
             print(f"Accuracy over test set: {accuracy_result}.")
+            print(
+                "binary cross entropy loss",
+                bce_loss / (args.batch_size),
+            )
 
 
 if __name__ == "__main__":

@@ -139,10 +139,17 @@ def _eval(
     auroc = metrics.AUROC(compute_on_step=False).to(device)
     accuracy = metrics.Accuracy(compute_on_step=False).to(device)
     val_losses = []
-
+    step = 0
     with torch.no_grad():
         while True:
             try:
+                if step == 100000:
+                    break
+
+                if (dist.get_rank() == 0 and step % 1000 == 0 and step != 0):
+                    print(f"step :{step}")
+                
+
                 loss, logits, labels = train_pipeline.progress(it)
                 val_losses.append(loss)
                 preds = torch.sigmoid(logits)
@@ -150,6 +157,7 @@ def _eval(
                 labels = labels.to(torch.int32)
                 auroc(preds, labels)
                 accuracy(preds, labels)
+                step += 1
             except StopIteration:
                 break
     auroc_result = auroc.compute().item()
@@ -195,6 +203,18 @@ def main(argv: List[str]):
         binary_file_path=os.path.join(args.binary_path, "test"),
         batch_size=args.batch_size,
     ).get_dataloader(rank=rank, world_size=world_size)
+
+    # it = iter(val_loader)
+    # step = 0
+    # while True:
+    #     try:
+    #         batch = next(it)
+    #         if (rank == 0):
+    #             print(step)
+    #         step += 1
+    #     except StopIteration:
+    #         break
+    # print("finished")
 
     eb_configs = [
         EmbeddingBagConfig(

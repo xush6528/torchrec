@@ -30,9 +30,9 @@ class ParametricDataset(Dataset):
     def __init__(
         self,
         binary_file_path: str,
-        batch_size: int = 1,  # should be same as the pre-proc
-        prefetch_depth: int = 100,
-        drop_last_batch: bool = False,
+        batch_size: int,  
+        prefetch_depth: int,
+        drop_last_batch,
         **kwargs,
     ):
         self._batch_size = batch_size
@@ -90,6 +90,9 @@ class ParametricDataset(Dataset):
         self._prefetch_depth = min(prefetch_depth, self._num_entries)
         self._prefetch_queue = queue.Queue()
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        # At the start, fill up the prefetching queue
+        for i in range(self._prefetch_depth):
+            self._prefetch_queue.put(self._executor.submit(self._get_item, (i)))
 
     def __len__(self):
         return self._num_entries
@@ -100,16 +103,18 @@ class ParametricDataset(Dataset):
         by the relevant chunk in source spec.
         Categorical features are returned in the order they appear in the channel spec section"""
 
+        # print(f"idx: {idx}")
+        # print(f"self._num_entries: {self._num_entries}")
+        # print(f"self._prefetch_depth: {self._prefetch_depth}")
+
+
         if idx >= self._num_entries:
             raise IndexError()
 
         if self._prefetch_depth <= 1:
             return self._get_item(idx)
 
-        # At the start, fill up the prefetching queue
-        if idx == 0:
-            for i in range(self._prefetch_depth):
-                self._prefetch_queue.put(self._executor.submit(self._get_item, (i)))
+        
         # Extend the prefetching window by one if not at the end of the dataset
         if idx < self._num_entries - self._prefetch_depth:
             self._prefetch_queue.put(
@@ -120,17 +125,24 @@ class ParametricDataset(Dataset):
     def _get_item(
         self, idx: int
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+        # print(f"idx: {idx}")
         click = self._get_label(idx)
+        # print(f"click: {click}")
         numerical_features = self._get_numerical_features(idx)
+        # print(f"numerical_features: {numerical_features}")
         categorical_features = self._get_categorical_features(idx)
+        # print(f"categorical_features: {categorical_features}")
+
         return numerical_features, categorical_features, click
 
     def _get_label(self, idx: int) -> torch.Tensor:
+        # print(f"get_label: {idx}")
         raw_label_data = os.pread(
             self._label_file,
             self._label_bytes_per_batch,
             idx * self._label_bytes_per_batch,
         )
+        # print(f"raw_label_data: {raw_label_data}")
         array = np.frombuffer(raw_label_data, dtype=np.float32)
         return torch.from_numpy(array).to(torch.float32)
 
@@ -193,6 +205,9 @@ class NvtBinaryDataloader:
         self.index_per_key: Dict[str, int] = {
             key: i for (i, key) in enumerate(self.keys)
         }
+        length = len(self.dataset)
+        print(f"length: {length}")
+        # print(f"last: {self.dataset[length-1]}")
 
     def collate_fn(self, attr_dict):
         dense_features, sparse_features, labels = attr_dict
@@ -210,6 +225,7 @@ class NvtBinaryDataloader:
             ),
             labels=labels,
         )
+        
 
     def get_dataloader(
         self,

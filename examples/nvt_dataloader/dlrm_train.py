@@ -5,7 +5,7 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-from typing import List, Optional, Tuple
+from typing import Tuple, Optional, List
 
 import torch
 from torch import nn
@@ -17,17 +17,14 @@ from torchrec.modules.embedding_modules import EmbeddingBagCollection
 class DLRMTrain(nn.Module):
     """
     nn.Module to wrap DLRM model to use with train_pipeline.
-
     DLRM Recsys model from "Deep Learning Recommendation Model for Personalization and
     Recommendation Systems" (https://arxiv.org/abs/1906.00091). Processes sparse
     features by learning pooled embeddings for each feature. Learns the relationship
     between dense features and sparse features by projecting dense features into the
     same embedding space. Also, learns the pairwise relationships between sparse
     features.
-
     The module assumes all sparse features have the same embedding dimension
     (i.e, each EmbeddingBagConfig uses the same embedding_dim)
-
     Args:
         embedding_bag_collection (EmbeddingBagCollection): collection of embedding bags
             used to define SparseArch.
@@ -37,9 +34,11 @@ class DLRMTrain(nn.Module):
             output dimension of the InteractionArch should not be manually specified
             here.
         dense_device: (Optional[torch.device]).
-
+    Call Args:
+        batch: batch used with criteo and random data from torchrec.datasets
+    Returns:
+        Tuple[loss, Tuple[loss, logits, labels]]
     Example::
-
         ebc = EmbeddingBagCollection(config=ebc_config)
         model = DLRMTrain(
            embedding_bag_collection=ebc,
@@ -70,12 +69,6 @@ class DLRMTrain(nn.Module):
     def forward(
         self, batch: Batch
     ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
-        """
-        Args:
-            batch: batch used with criteo and random data from torchrec.datasets
-        Returns:
-            Tuple[loss, Tuple[loss, logits, labels]]
-        """
         logits = self.model(batch.dense_features, batch.sparse_features)
         logits = logits.squeeze()
         loss = self.loss_fn(logits, batch.labels.float())

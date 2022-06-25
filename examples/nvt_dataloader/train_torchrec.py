@@ -143,9 +143,6 @@ def _eval(
     with torch.no_grad():
         while True:
             try:
-                # if step > 3000:
-                #     break
-
                 if dist.get_rank() == 0 and step % 1000 == 0 and step != 0:
                     print(f"step :{step}")
 
@@ -188,12 +185,10 @@ def main(argv: List[str]):
         num_embeddings_per_feature = list(
             map(int, args.num_embeddings_per_feature.split(","))
         )
-
     train_loader = NvtBinaryDataloader(
         binary_file_path=os.path.join(args.binary_path, "train"),
         batch_size=args.batch_size,
     ).get_dataloader(rank=rank, world_size=world_size)
-
     val_loader = NvtBinaryDataloader(
         binary_file_path=os.path.join(args.binary_path, "validation"),
         batch_size=args.batch_size,
@@ -208,10 +203,31 @@ def main(argv: List[str]):
     # step = 0
     # while True:
     #     try:
-    #         # if (step == 4):
-    #         #     break
     #         batch = next(it)
-    #         print(batch)
+    #         print(f"train dense: {batch.dense_features}")
+    #         print(f"train sparse: {batch.sparse_features}")
+    #         step += 1
+    #     except StopIteration:
+    #         break
+
+    # it = iter(val_loader)
+    # step = 0
+    # while True:
+    #     try:
+    #         batch = next(it)
+    #         print(f"val dense: {batch.dense_features}")
+    #         print(f"val sparse: {batch.sparse_features}")
+    #         step += 1
+    #     except StopIteration:
+    #         break
+    
+    # it = iter(test_loader)
+    # step = 0
+    # while True:
+    #     try:
+    #         batch = next(it)
+    #         print(f"test dense: {batch.dense_features}")
+    #         print(f"test sparse: {batch.sparse_features}")
     #         step += 1
     #     except StopIteration:
     #         break
@@ -324,9 +340,11 @@ def main(argv: List[str]):
                 if step % args.throughput_check_freq_within_epoch == 0 and step != 0:
                     # infra calculation
                     throughput_val = throughput.compute()
+                    bce_loss = torch.mean(torch.stack(losses))
                     if rank == 0:
                         print("step", step)
                         print("throughput", throughput_val)
+                        print("BCE_Loss: ", bce_loss / (args.batch_size))
                     losses = []
                 if step % args.validation_freq_within_epoch == 0 and step != 0:
                     # metrics calculation

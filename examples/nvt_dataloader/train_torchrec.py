@@ -86,7 +86,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     parser.add_argument(
         "--learning_rate",
         type=float,
-        default=0.0005,
+        default=15.0,
         help="Learning rate.",
     )
     parser.add_argument(
@@ -112,7 +112,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     parser.add_argument(
         "--lr_after_change_point",
         type=float,
-        default=0.20,
+        default=3.0,
         help="Learning rate after change point in first epoch.",
     )
     parser.add_argument(
@@ -190,12 +190,14 @@ def main(argv: List[str]):
         batch_size=args.batch_size,
     ).get_dataloader(rank=rank, world_size=world_size)
     val_loader = NvtBinaryDataloader(
-        binary_file_path=os.path.join(args.binary_path, "validation"),
+        binary_file_path=os.path.join(args.binary_path, "test"),
+        #binary_file_path=os.path.join(args.binary_path, "validation"),
         batch_size=args.batch_size,
     ).get_dataloader(rank=rank, world_size=world_size)
 
     test_loader = NvtBinaryDataloader(
-        binary_file_path=os.path.join(args.binary_path, "test"),
+        binary_file_path=os.path.join(args.binary_path, "validation"),
+        #binary_file_path=os.path.join(args.binary_path, "test"),
         batch_size=args.batch_size,
     ).get_dataloader(rank=rank, world_size=world_size)
 
@@ -270,7 +272,7 @@ def main(argv: List[str]):
 
     pg = dist.GroupMember.WORLD
 
-    hbm_cap = torch.cuda.get_device_properties(device).total_memory * 0.7
+    hbm_cap = torch.cuda.get_device_properties(device).total_memory
     local_world_size = trec_dist.comm.get_local_size(world_size)
     model = DistributedModelParallel(
         module=train_model,
@@ -340,11 +342,11 @@ def main(argv: List[str]):
                 if step % args.throughput_check_freq_within_epoch == 0 and step != 0:
                     # infra calculation
                     throughput_val = throughput.compute()
-                    bce_loss = torch.mean(torch.stack(losses))
+                    #bce_loss = torch.mean(torch.stack(losses))
                     if rank == 0:
                         print("step", step)
                         print("throughput", throughput_val)
-                        print("BCE_Loss: ", bce_loss / (args.batch_size))
+                      #  print("BCE_Loss: ", bce_loss / (args.batch_size))
                     losses = []
                 if step % args.validation_freq_within_epoch == 0 and step != 0:
                     # metrics calculation
@@ -368,6 +370,16 @@ def main(argv: List[str]):
         if rank == 0:
             print(f"this epoch training takes {train_time - start_time}")
 
+        # eval
+        val_it = iter(val_loader)
+        auroc_result, accuracy_result, bce_loss = _eval(train_pipeline, val_it)
+        if rank == 0:
+            print(f"AUROC over validation set: {auroc_result}.")
+            print(f"Accuracy over validation set: {accuracy_result}.")
+            print(
+                "binary cross entropy loss over validation set",
+                bce_loss / (args.batch_size),
+            )
         # test
         test_it = iter(test_loader)
         auroc_result, accuracy_result, bce_loss = _eval(train_pipeline, test_it)
@@ -375,7 +387,7 @@ def main(argv: List[str]):
             print(f"AUROC over test set: {auroc_result}.")
             print(f"Accuracy over test set: {accuracy_result}.")
             print(
-                "binary cross entropy loss",
+                "binary cross entropy loss over test set",
                 bce_loss / (args.batch_size),
             )
 

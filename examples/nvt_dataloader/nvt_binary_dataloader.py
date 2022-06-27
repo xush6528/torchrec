@@ -211,7 +211,7 @@ class NvtBinaryDataloader:
             self.dataset,
             num_replicas=world_size,
             rank=rank,
-            shuffle=True,
+            shuffle=False,
             drop_last=False,
         )
         dataloader = data_utils.DataLoader(
@@ -223,3 +223,4 @@ class NvtBinaryDataloader:
             num_workers=0,
         )
         return dataloader
+
